@@ -306,15 +306,54 @@ int prompt(struct command_t *command) {
   return SUCCESS;
 }
 
+static char *resolve_in_path(const char *cmd) {
+  // return null if command is empty
+  if (!cmd || cmd[0] == '\0') return NULL;
+
+  // if command contains '/', treat as direct path
+  if (strchr(cmd, '/')) {
+    if (access(cmd, X_OK) == 0) return strdup(cmd);
+    return NULL;
+  }
+
+  const char *path_env = getenv("PATH"); // get PATH enviorment variable
+  if (!path_env) return NULL;
+
+  char *paths = strdup(path_env); // duplicate PATH because strtok modifies
+  if (!paths) return NULL;
+
+  char *saveptr = NULL;
+  for (char *dir = strtok_r(paths, ":", &saveptr); // itarate over the directories
+       dir != NULL;
+       dir = strtok_r(NULL, ":", &saveptr)) {
+
+    // full path construction    
+    size_t need = strlen(dir) + 1 + strlen(cmd) + 1;
+    char *full = (char *)malloc(need);
+    if (!full) continue;
+
+    snprintf(full, need, "%s/%s", dir, cmd);
+
+    if (access(full, X_OK) == 0) { // check executable
+      free(paths);
+      return full; // caller will free
+    }
+    free(full);
+  }
+
+  free(paths);
+  return NULL;
+}
+
 int process_command(struct command_t *command) {
   int r;
-  if (strcmp(command->name, "") == 0)
+  if (strcmp(command->name, "") == 0) 
     return SUCCESS;
 
-  if (strcmp(command->name, "exit") == 0)
+  if (strcmp(command->name, "exit") == 0) 
     return EXIT;
 
-  if (strcmp(command->name, "cd") == 0) {
+  if (strcmp(command->name, "cd") == 0) { 
     if (command->arg_count > 0) {
       r = chdir(command->args[1]);
       if (r == -1)
@@ -323,7 +362,7 @@ int process_command(struct command_t *command) {
     }
   }
 
-  pid_t pid = fork();
+  pid_t pid = fork(); 
   if (pid == 0) // child
   {
     /// This shows how to do exec with environ (but is not available on MacOs)
@@ -336,14 +375,28 @@ int process_command(struct command_t *command) {
 
     // TODO: do your own exec with path resolving using execv()
     // do so by replacing the execvp call below
-    execvp(command->name, command->args); // exec+args+path
-    printf("-%s: %s: command not found\n", sysname, command->name);
+    char *fullpath = resolve_in_path(command->name); // resolve command full path manually
+    if (!fullpath) {
+      printf("-%s: %s: command not found\n", sysname, command->name);
+      exit(127);
+    }
+
+    execv(fullpath, command->args); // execute with arguements
+
+    // execution failed error
+    printf("-%s: %s: %s\n", sysname, command->name, strerror(errno));
+    free(fullpath);
     exit(127);
   } else {
     // TODO: implement background processes here
-    wait(0); // wait for child process to finish
-    return SUCCESS;
-  }
+    if (command->background) { // if command has '&', run in background
+      waitpid(pid, NULL, WNOHANG);
+      return SUCCESS;
+}
+      // execute in foreground wait until child finish
+      waitpid(pid, NULL, 0);
+      return SUCCESS;
+      }
 }
 
 int main() {
