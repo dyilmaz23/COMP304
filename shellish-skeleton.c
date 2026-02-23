@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <termios.h> // termios, TCSANOW, ECHO, ICANON
 #include <unistd.h>
+#include <fcntl.h> // for open()
 const char *sysname = "shellish";
 
 enum return_codes {
@@ -380,8 +381,38 @@ int process_command(struct command_t *command) {
       printf("-%s: %s: command not found\n", sysname, command->name);
       exit(127);
     }
+    // PART 2: redirections
+    if (command->redirects[0]) { // <input
+        int fd = open(command->redirects[0], O_RDONLY);
+        if (fd < 0) {
+            printf("-%s: %s: %s\n", sysname, command->redirects[0], strerror(errno));
+            exit(1);
+        }
+        dup2(fd, STDIN_FILENO);
+        close(fd);
+    }
 
-    execv(fullpath, command->args); // execute with arguements
+    if (command->redirects[1]) { // >output overwrite
+        int fd = open(command->redirects[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) {
+            printf("-%s: %s: %s\n", sysname, command->redirects[1], strerror(errno));
+            exit(1);
+        }
+        dup2(fd, STDOUT_FILENO);
+        close(fd);
+    }
+
+    if (command->redirects[2]) { //>>output append
+        int fd = open(command->redirects[2], O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd < 0) {
+            printf("-%s: %s: %s\n", sysname, command->redirects[2], strerror(errno));
+            exit(1);
+        }
+        dup2(fd, STDOUT_FILENO);
+        close(fd);
+    }
+
+    execv(fullpath, command->args); //execute with arguements
 
     // execution failed error
     printf("-%s: %s: %s\n", sysname, command->name, strerror(errno));
