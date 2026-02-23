@@ -1,0 +1,7 @@
+# build outputs
+shellish
+*.o
+a.out
+
+# editor
+.vscode/
