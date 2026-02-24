@@ -7,6 +7,7 @@
 #include <termios.h> // termios, TCSANOW, ECHO, ICANON
 #include <unistd.h>
 #include <fcntl.h> // for open()
+#include <ctype.h> // isdigit
 const char *sysname = "shellish";
 
 enum return_codes {
@@ -344,6 +345,7 @@ static char *resolve_in_path(const char *cmd) {
   return NULL;
 }
 
+
 int process_command(struct command_t *command) {
   int r;
   if (strcmp(command->name, "") == 0) 
@@ -352,13 +354,59 @@ int process_command(struct command_t *command) {
   if (strcmp(command->name, "exit") == 0) 
     return EXIT;
 
-  if (strcmp(command->name, "cd") == 0) { 
+if (strcmp(command->name, "cd") == 0) { 
     if (command->arg_count > 0) {
       r = chdir(command->args[1]);
       if (r == -1)
         printf("-%s: %s: %s\n", sysname, command->name, strerror(errno));
       return SUCCESS;
     }
+  }
+
+  // part 3b: cut builtin, read input, split by delimeer and print requested
+  if (strcmp(command->name, "cut") == 0) {
+
+    char delim = '\t';
+    char *fields = NULL;
+
+    // parse args
+    for (int i = 1; i < command->arg_count - 1; i++) {
+      if (strcmp(command->args[i], "-d") == 0 && command->args[i+1])
+        delim = command->args[i+1][0];
+
+      if (strcmp(command->args[i], "-f") == 0 && command->args[i+1])
+        fields = command->args[i+1];
+    }
+
+    if (!fields) return SUCCESS;
+
+    int f1 = atoi(strtok(fields, ","));
+    int f2 = atoi(strtok(NULL, ","));
+
+    char line[4096];
+    while (fgets(line, sizeof(line), stdin)) {
+
+      char *token;
+      int index = 1;
+
+      token = strtok(line, &delim);
+
+      while (token) {
+
+        if (index == f1 || index == f2)
+          printf("%s", token);
+
+        token = strtok(NULL, &delim);
+        index++;
+
+        if ((index == f2+1))
+          printf("%c", delim);
+      }
+
+      printf("\n");
+    }
+
+    return SUCCESS;
   }
 
   // Part 3a: piping
