@@ -105,7 +105,8 @@ int parse_command(char *buf, struct command_t *command) {
   if (len > 0 && buf[len - 1] == '&') // background
     command->background = true;
 
-  char *pch = strtok(buf, splitters);
+  char *saveptr = NULL;
+  char *pch = strtok_r(buf, splitters, &saveptr);
   if (pch == NULL) {
     command->name = (char *)malloc(1);
     command->name[0] = 0;
@@ -121,7 +122,7 @@ int parse_command(char *buf, struct command_t *command) {
   char temp_buf[1024], *arg;
   while (1) {
     // tokenize input on splitters
-    pch = strtok(NULL, splitters);
+    pch = strtok_r(NULL, splitters, &saveptr);
     if (!pch)
       break;
     arg = temp_buf;
@@ -140,21 +141,18 @@ int parse_command(char *buf, struct command_t *command) {
     if (len == 0)
       continue; // empty arg, go for next
 
-    // piping to another command
-    if (strcmp(arg, "|") == 0) {
-      struct command_t *c =
-          (struct command_t *)malloc(sizeof(struct command_t));
-      int l = strlen(pch);
-      pch[l] = splitters[0]; // restore strtok termination
-      index = 1;
-      while (pch[index] == ' ' || pch[index] == '\t')
-        index++; // skip whitespaces
+// piping to another command
+if (strcmp(arg, "|") == 0) {
+  struct command_t *c = (struct command_t *)malloc(sizeof(struct command_t));
+  memset(c, 0, sizeof(struct command_t));
 
-      parse_command(pch + index, c);
-      pch[l] = 0; // put back strtok termination
-      command->next = c;
-      continue;
-    }
+  // text after "|" is parsed as the next command 
+  while (*saveptr == ' ' || *saveptr == '\t') saveptr++; // skip whitespace
+  parse_command(saveptr, c);
+
+  command->next = c;
+  break; // stop parsing args for the left command
+}
 
     // background process
     if (strcmp(arg, "&") == 0)
@@ -363,6 +361,58 @@ int process_command(struct command_t *command) {
     }
   }
 
+  // Part 3a: piping
+if (command->next != NULL) {
+  int fd[2];
+  if (pipe(fd) < 0) {
+    printf("-%s: pipe: %s\n", sysname, strerror(errno));
+    return SUCCESS;
+  }
+
+  pid_t left = fork();
+  if (left == 0) {
+    // left command: stdout -> pipe write
+    dup2(fd[1], STDOUT_FILENO);
+    close(fd[0]);
+    close(fd[1]);
+
+    // apply redirections on left 
+    char *fullpath = resolve_in_path(command->name);
+    if (!fullpath) {
+      printf("-%s: %s: command not found\n", sysname, command->name);
+      exit(127);
+    }
+    execv(fullpath, command->args);
+    printf("-%s: %s: %s\n", sysname, command->name, strerror(errno));
+    free(fullpath);
+    exit(127);
+  }
+
+  pid_t right = fork();
+  if (right == 0) {
+    // right side: stdin <- pipe read
+    dup2(fd[0], STDIN_FILENO);
+    close(fd[0]);
+    close(fd[1]);
+
+    // recursively execute the rest pipeline
+    exit(process_command(command->next));
+  }
+
+  // parent
+  close(fd[0]);
+  close(fd[1]);
+
+  if (command->background) {
+    waitpid(left, NULL, WNOHANG);
+    waitpid(right, NULL, WNOHANG);
+    return SUCCESS;
+  }
+
+  waitpid(left, NULL, 0);
+  waitpid(right, NULL, 0);
+  return SUCCESS;
+}
   pid_t pid = fork(); 
   if (pid == 0) // child
   {
