@@ -8,6 +8,10 @@
 #include <unistd.h>
 #include <fcntl.h> // for open()
 #include <ctype.h> // isdigit
+#include <dirent.h> // opedndir, readdir
+#include <sys/stat.h> // mkdir, mkfifo, stat
+#include <sys/types.h> 
+#include <signal.h> // kill, SIGTERM
 const char *sysname = "shellish";
 
 enum return_codes {
@@ -345,6 +349,108 @@ static char *resolve_in_path(const char *cmd) {
   return NULL;
 }
 
+// part 3b-b: chatroom builtin
+static void ensure_dir_exists(const char *path) {
+  struct stat st;
+  if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) return;
+  mkdir(path, 0777); // if fails, next operations will fail 
+}
+
+static void ensure_fifo_exists(const char *path) {
+  struct stat st;
+  if (stat(path, &st) == 0) return; // exists
+  mkfifo(path, 0666);
+}
+
+// child: write a message to one fifo
+static void write_one_fifo(const char *fifo_path, const char *msg) {
+  int fd = open(fifo_path, O_WRONLY | O_NONBLOCK);
+  if (fd < 0) _exit(0); // ignore if nobody reads
+  write(fd, msg, strlen(msg));
+  close(fd);
+  _exit(0);
+}
+static int run_chatroom(struct command_t *command) {
+  // chatroom <roomname> <username>
+  if (command->arg_count < 3) return SUCCESS;
+
+  const char *room = command->args[1];
+  const char *user = command->args[2];
+
+  char room_dir[512];
+  snprintf(room_dir, sizeof(room_dir), "/tmp/chatroom-%s", room);
+  ensure_dir_exists(room_dir); // create room folder if needed with contentReference[oaicite:3]{index=3}
+
+  char my_fifo[512];
+  snprintf(my_fifo, sizeof(my_fifo), "%s/%s", room_dir, user);
+  ensure_fifo_exists(my_fifo); // create user fifo if needed with contentReference[oaicite:4]{index=4}
+
+  printf("Welcome to %s!\n", room);
+
+  // reader child continuously reads from own fifo with contentReference[oaicite:5]{index=5}
+  pid_t reader = fork();
+  if (reader == 0) {
+    // open RDWR for no writes yet
+    int fd = open(my_fifo, O_RDWR);
+    if (fd < 0) _exit(1);
+
+    FILE *fp = fdopen(fd, "r");
+    if (!fp) _exit(1);
+
+    char line[4096];
+    while (fgets(line, sizeof(line), fp)) {
+      fputs(line, stdout);
+      fflush(stdout);
+    }
+    _exit(0);
+  }
+
+  // writer loop: type messages; send to others via separate children with contentReference[oaicite:6]{index=6}
+  char input[2048];
+  while (1) {
+    printf("[%s] %s > ", room, user);
+    fflush(stdout);
+
+    if (!fgets(input, sizeof(input), stdin)) break;
+
+    size_t L = strlen(input);
+    if (L > 0 && input[L - 1] == '\n') input[L - 1] = '\0';
+
+    if (strcmp(input, "exit") == 0) break;
+
+    char msg[4096];
+    snprintf(msg, sizeof(msg), "[%s] %s: %s\n", room, user, input);
+
+    DIR *d = opendir(room_dir);
+    if (!d) continue;
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+      if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+      if (strcmp(ent->d_name, user) == 0) continue; // don't write to self
+
+      char target[512];
+      snprintf(target, sizeof(target), "%s/%s", room_dir, ent->d_name);
+
+      pid_t s = fork(); // separate child per recipient w,th contentReference[oaicite:7]{index=7}
+      if (s == 0) write_one_fifo(target, msg);
+    }
+    closedir(d);
+
+    // reap finished sender children for avoiding zombies
+    while (waitpid(-1, NULL, WNOHANG) > 0) {}
+  }
+  // stopped reader child so it doesn't keep printing other rooms when executed
+  kill(reader, SIGTERM);
+  waitpid(reader, NULL, 0);
+
+  // remove the fifo so others in the room won't keep writing 
+  unlink(my_fifo);
+
+  return SUCCESS;
+}
+
+
 
 int process_command(struct command_t *command) {
   int r;
@@ -362,8 +468,11 @@ if (strcmp(command->name, "cd") == 0) {
       return SUCCESS;
     }
   }
+    if (strcmp(command->name, "chatroom") == 0) { // part 3b-b extension
+    return run_chatroom(command);
+  }
 
-  // part 3b: cut builtin, read input, split by delimeer and print requested
+  // part 3b-a: cut builtin, read input, split by delimeer and print requested
   if (strcmp(command->name, "cut") == 0) {
 
     char delim = '\t';
