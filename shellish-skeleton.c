@@ -450,6 +450,59 @@ static int run_chatroom(struct command_t *command) {
   return SUCCESS;
 }
 
+// part 3c: custom command tail <file> [N]
+#define TAIL_MAX_N 1000
+#define LINE_MAX 4096
+
+static int run_tail(struct command_t *command) {
+  // tail <file> [N]
+  if (command->arg_count < 2) {
+    printf("Usage: tail <file> [N]\n");
+    return SUCCESS;
+  }
+
+  const char *filename = command->args[1];
+  int N = 5; // default
+  if (command->args[2] != NULL) {
+    char *end = NULL;
+    long n_long = strtol(command->args[2], &end, 10);
+    if (end == command->args[2] || *end != '\0' || n_long <= 0) {
+      printf("N must be a positive integer\n");
+      return SUCCESS;
+    }
+    N = (int)n_long;
+    if (N > TAIL_MAX_N) N = TAIL_MAX_N; // if no N is specified, the tail command automatically prints the last 5 lines
+  }
+
+  FILE *fp = fopen(filename, "r");
+  if (!fp) {
+    printf("-%s: %s: %s\n", sysname, filename, strerror(errno));
+    return SUCCESS;
+  }
+
+  // ring buffer: store last N lines
+  static char ring[TAIL_MAX_N][LINE_MAX];
+  int count = 0; // total lines read 
+  int filled = 0; // how many slots actually filled until reaching N 
+
+  char buf[LINE_MAX];
+  while (fgets(buf, sizeof(buf), fp)) {
+    int idx = count % N;
+    strncpy(ring[idx], buf, LINE_MAX - 1);
+    ring[idx][LINE_MAX - 1] = '\0';
+    count++;
+    if (filled < N) filled++;
+  }
+  fclose(fp);
+
+  // print in correct order oldest to newest
+  int start = (count - filled);
+  for (int i = 0; i < filled; i++) {
+    int idx = (start + i) % N;
+    fputs(ring[idx], stdout);
+  }
+  return SUCCESS;
+}
 
 
 int process_command(struct command_t *command) {
@@ -468,8 +521,14 @@ if (strcmp(command->name, "cd") == 0) {
       return SUCCESS;
     }
   }
-    if (strcmp(command->name, "chatroom") == 0) { // part 3b-b extension
+    // part 3b-b extension
+    if (strcmp(command->name, "chatroom") == 0) { 
     return run_chatroom(command);
+  }
+
+   // part 3c: custom command builtin, tail with N prints the last N lines of a file
+  if (strcmp(command->name, "tail") == 0) {
+    return run_tail(command);
   }
 
   // part 3b-a: cut builtin, read input, split by delimeer and print requested
