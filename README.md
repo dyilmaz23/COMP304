@@ -5,7 +5,7 @@ Repo: https://github.com/dyilmaz23/COMP304
 ## Build
 gcc -Wall -Wextra -g -o shellish shellish-skeleton.c
 
-## Run (recommended)
+## Run 
 rlwrap --always-readline ./shellish
 
 ## Custom Command: Tail
